@@ -6,11 +6,11 @@ services:
     container_name: immich-geekmagic-sync
     restart: unless-stopped
     environment:
-      # Override these in Portainer if needed
-      - TZ=Europe/Lisbon
-    volumes:
-      # Mount .env file for easy configuration changes
-      - ./.env:/app/.env:ro
+      # Set these in Portainer environment variables
+      - IMMICH_URL=${IMMICH_URL}
+      - IMMICH_API_KEY=${IMMICH_API_KEY}
+      - GEEKMAGIC_URL=${GEEKMAGIC_URL}
+      - TZ=${TZ:-Europe/Lisbon}
     networks:
       - default
 
