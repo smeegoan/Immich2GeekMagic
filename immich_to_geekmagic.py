@@ -233,6 +233,13 @@ class GeekMagicClient:
         """
         try:
             with Image.open(input_path) as img:
+                # Apply EXIF orientation to prevent rotated images
+                try:
+                    from PIL import ImageOps
+                    img = ImageOps.exif_transpose(img)
+                except Exception:
+                    pass  # If EXIF orientation fails, continue without it
+                
                 # Convert RGBA to RGB if necessary
                 if img.mode == 'RGBA':
                     img = img.convert('RGB')
