@@ -17,8 +17,8 @@ WORKDIR /app
 # Copy application files
 COPY immich_to_geekmagic.py .
 
-# Create cron job to run daily at 8:00 AM
-RUN echo "0 8 * * * cd /app && python immich_to_geekmagic.py >> /var/log/cron.log 2>&1" > /etc/crontabs/root
+# Create cron job to run daily at 1:00 AM
+RUN echo "0 1 * * * cd /app && python immich_to_geekmagic.py >> /var/log/cron.log 2>&1" > /etc/crontabs/root
 
 # Create log file
 RUN touch /var/log/cron.log
