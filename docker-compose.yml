@@ -1,0 +1,19 @@
+version: '3.8'
+
+services:
+  immich-geekmagic-sync:
+    build: .
+    container_name: immich-geekmagic-sync
+    restart: unless-stopped
+    environment:
+      # Override these in Portainer if needed
+      - TZ=Europe/Lisbon
+    volumes:
+      # Mount .env file for easy configuration changes
+      - ./.env:/app/.env:ro
+    networks:
+      - default
+
+networks:
+  default:
+    driver: bridge
