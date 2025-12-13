@@ -10,6 +10,7 @@ import requests
 from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import tempfile
+import time
 from PIL import Image
 from urllib.parse import quote
 from dotenv import load_dotenv
@@ -159,6 +160,22 @@ class GeekMagicClient:
         """
         self.base_url = base_url.rstrip('/')
     
+    def check_connection(self, timeout: int = 5) -> bool:
+        """
+        Check if GeekMagic device is accessible.
+        
+        Args:
+            timeout: Request timeout in seconds
+            
+        Returns:
+            True if device is accessible, False otherwise
+        """
+        try:
+            response = requests.get(self.base_url, timeout=timeout)
+            return response.status_code == 200
+        except requests.exceptions.RequestException:
+            return False
+    
     def get_file_list(self) -> List[str]:
         """
         Get list of existing files on GeekMagic device.
@@ -306,6 +323,38 @@ class GeekMagicClient:
             return False
 
 
+def wait_for_geekmagic(geekmagic: GeekMagicClient, max_retries: int = 10, retry_delay: int = 300) -> bool:
+    """
+    Wait for GeekMagic device to become available with retry logic.
+    
+    Args:
+        geekmagic: GeekMagicClient instance
+        max_retries: Maximum number of connection attempts
+        retry_delay: Delay between retries in seconds (default: 5 minutes)
+        
+    Returns:
+        True if connection successful, False if max retries reached
+    """
+    for attempt in range(1, max_retries + 1):
+        print(f"\nAttempt {attempt}/{max_retries}: Checking GeekMagic connection...")
+        
+        if geekmagic.check_connection():
+            print("✓ GeekMagic device is online and accessible")
+            return True
+        
+        if attempt < max_retries:
+            current_time = datetime.now().strftime("%H:%M:%S")
+            next_retry = datetime.now() + timedelta(seconds=retry_delay)
+            print(f"✗ GeekMagic device is not accessible at {current_time}")
+            print(f"  Waiting {retry_delay // 60} minutes before next attempt...")
+            print(f"  Next retry at: {next_retry.strftime('%H:%M:%S')}")
+            time.sleep(retry_delay)
+        else:
+            print(f"✗ GeekMagic device unreachable after {max_retries} attempts")
+    
+    return False
+
+
 def main():
     """Main function to fetch memories and upload to GeekMagic."""
     
@@ -313,6 +362,10 @@ def main():
     IMMICH_URL = os.getenv('IMMICH_URL')
     IMMICH_API_KEY = os.getenv('IMMICH_API_KEY')
     GEEKMAGIC_URL = os.getenv('GEEKMAGIC_URL')
+    
+    # Retry configuration
+    MAX_RETRIES = int(os.getenv('GEEKMAGIC_MAX_RETRIES', '10'))
+    RETRY_DELAY = int(os.getenv('GEEKMAGIC_RETRY_DELAY', '300'))  # 5 minutes default
     
     # Allow overriding the date for testing (format: MM-DD or YYYY-MM-DD)
     TEST_DATE = os.getenv('TEST_DATE', '')
@@ -367,6 +420,16 @@ def main():
     if not memories:
         print("No memories found for today.")
         return
+    
+    # Wait for GeekMagic device to be available
+    print("\nWaiting for GeekMagic device to be available...")
+    if not wait_for_geekmagic(geekmagic, MAX_RETRIES, RETRY_DELAY):
+        print("\n❌ Could not connect to GeekMagic device. Please check:")
+        print("  1. Device is powered on")
+        print("  2. Device is connected to network")
+        print("  3. URL is correct in .env file")
+        print(f"  4. Expected connection window: 7:50 AM - 10:00 AM")
+        sys.exit(1)
     
     # Get existing files on GeekMagic
     print("\nChecking existing files on GeekMagic...")

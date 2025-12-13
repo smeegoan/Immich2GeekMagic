@@ -6,11 +6,39 @@ services:
     container_name: immich-geekmagic-sync
     restart: unless-stopped
     environment:
-      # Set these in Portainer environment variables
+      # Required settings
       - IMMICH_URL=${IMMICH_URL}
       - IMMICH_API_KEY=${IMMICH_API_KEY}
       - GEEKMAGIC_URL=${GEEKMAGIC_URL}
+      
+      # Retry configuration
+      - GEEKMAGIC_MAX_RETRIES=${GEEKMAGIC_MAX_RETRIES:-10}
+      - GEEKMAGIC_RETRY_DELAY=${GEEKMAGIC_RETRY_DELAY:-300}
+      
+      # Optional settings
+      - TEST_DATE=${TEST_DATE:-}
       - TZ=${TZ:-Europe/Lisbon}
+    
+    # Ofelia labels for scheduling
+    labels:
+      ofelia.enabled: "true"
+      ofelia.job-exec.sync-memories.schedule: "0 50 7 * * *"  # Run at 7:50 AM daily
+      ofelia.job-exec.sync-memories.command: "python /app/immich_to_geekmagic.py"
+    
+    # Use host network if you have connectivity issues
+    # network_mode: host
+    networks:
+      - default
+
+  ofelia:
+    image: mcuadros/ofelia:latest
+    container_name: ofelia-scheduler
+    depends_on:
+      - immich-geekmagic-sync
+    command: daemon --docker
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    restart: unless-stopped
     networks:
       - default
 
