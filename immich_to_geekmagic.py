@@ -11,9 +11,18 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional
 import tempfile
 import time
-from PIL import Image
+from PIL import Image, ImageDraw, ImageFont
 from urllib.parse import quote
 from dotenv import load_dotenv
+
+try:
+    from moviepy import VideoFileClip
+    import numpy as np
+    MOVIEPY_AVAILABLE = True
+except ImportError:
+    MOVIEPY_AVAILABLE = False
+    print("Warning: moviepy not installed. Video conversion will be disabled.")
+    print("Install with: pip install moviepy")
 
 # Load environment variables from .env file
 load_dotenv()
@@ -137,12 +146,38 @@ class ImmichClient:
             response = requests.get(url, headers=self.headers, stream=True)
             response.raise_for_status()
             
+            # Check content type to ensure it's an image or video
+            content_type = response.headers.get('content-type', '').lower()
+            if not (content_type.startswith('image/') or content_type.startswith('video/')):
+                print(f"Skipping asset {asset_id} - not an image or video (type: {content_type})")
+                return False
+            
+            is_video = content_type.startswith('video/')
+            
             with open(output_path, 'wb') as f:
                 for chunk in response.iter_content(chunk_size=8192):
                     f.write(chunk)
             
-            print(f"Downloaded asset {asset_id} to {output_path}")
+            # Verify the file was downloaded and is not empty
+            file_size = os.path.getsize(output_path)
+            if file_size == 0:
+                print(f"Error: Downloaded file is empty for asset {asset_id}")
+                return False
+            
+            # Verify it's a valid image (skip verification for videos)
+            if not is_video:
+                try:
+                    with Image.open(output_path) as img:
+                        img.verify()  # Verify it's a valid image
+                except Exception as e:
+                    print(f"Error: Downloaded file is not a valid image for asset {asset_id}: {e}")
+                    return False
+            
+            file_size_kb = file_size / 1024
+            asset_type = "video" if is_video else "image"
+            print(f"Downloaded {asset_type} {asset_id} ({file_size_kb:.1f} KB)")
             return True
+                
         except requests.exceptions.RequestException as e:
             print(f"Error downloading asset {asset_id}: {e}")
             return False
@@ -236,7 +271,7 @@ class GeekMagicClient:
             print(f"Error deleting {filename}: {e}")
             return False
     
-    def resize_image(self, input_path: str, output_path: str, size: tuple = (240, 240)) -> bool:
+    def resize_image(self, input_path: str, output_path: str, size: tuple = (240, 240), photo_datetime: Optional[datetime] = None) -> bool:
         """
         Resize and crop an image to fill the specified size without black bars.
         
@@ -244,6 +279,7 @@ class GeekMagicClient:
             input_path: Path to the input image
             output_path: Path to save the resized image
             size: Target size as (width, height) tuple
+            photo_datetime: Optional datetime when photo was taken (for year overlay)
             
         Returns:
             True if successful, False otherwise
@@ -280,6 +316,63 @@ class GeekMagicClient:
                 # Now resize to exact target size
                 img = img.resize(size, Image.Resampling.LANCZOS)
                 
+                # Draw year text on the image if provided
+                if photo_datetime:
+                    draw = ImageDraw.Draw(img)
+                    year_text = str(photo_datetime.year)
+                    
+                    # Try to use a nice font, fall back to default if not available
+                    try:
+                        # Try to load a TrueType font (adjust size as needed)
+                        font_size = int(size[1] * 0.15)  # 15% of image height
+                        font = ImageFont.truetype("arial.ttf", font_size)
+                    except:
+                        try:
+                            # Try default font with larger size
+                            font = ImageFont.load_default()
+                        except:
+                            font = None
+                    
+                    # Get text bounding box
+                    if font:
+                        bbox = draw.textbbox((0, 0), year_text, font=font)
+                        text_width = bbox[2] - bbox[0]
+                        text_height = bbox[3] - bbox[1]
+                    else:
+                        # Rough estimate if font fails
+                        text_width = len(year_text) * 8
+                        text_height = 12
+                    
+                    # Position at bottom center with some padding
+                    x = (size[0] - text_width) // 2
+                    y = int(size[1] * 0.88) - text_height  # 12% from bottom
+                    
+                    # Choose color based on time of day photo was taken
+                    hour = photo_datetime.hour
+                    
+                    if 6 <= hour < 12:
+                        # Morning (6 AM - 12 PM): Gold/Yellow
+                        text_color = (255, 215, 0)  # Gold
+                        shadow_color = (139, 115, 0)  # Dark goldenrod
+                    elif 12 <= hour < 18:
+                        # Afternoon (12 PM - 6 PM): Orange
+                        text_color = (255, 140, 0)  # Dark orange
+                        shadow_color = (139, 69, 0)  # Saddle brown
+                    elif 18 <= hour < 21:
+                        # Evening (6 PM - 9 PM): Purple/Magenta
+                        text_color = (255, 0, 255)  # Magenta
+                        shadow_color = (139, 0, 139)  # Dark magenta
+                    else:
+                        # Night (9 PM - 6 AM): Blue
+                        text_color = (0, 191, 255)  # Deep sky blue
+                        shadow_color = (0, 0, 139)  # Dark blue
+                    
+                    # Draw text with shadow for better visibility
+                    # Shadow
+                    draw.text((x + 2, y + 2), year_text, fill=shadow_color, font=font)
+                    # Main text
+                    draw.text((x, y), year_text, fill=text_color, font=font)
+                
                 # Save as JPEG
                 img.save(output_path, 'JPEG', quality=85)
                 
@@ -288,7 +381,123 @@ class GeekMagicClient:
             print(f"Error resizing image: {e}")
             return False
     
-    def upload_image_direct(self, image_path: str) -> bool:
+    def convert_video_to_gif(self, input_path: str, output_path: str, size: tuple = (240, 240), 
+                           photo_datetime: Optional[datetime] = None, max_duration: int = 3, fps: int = 5) -> bool:
+        """
+        Convert a video to an animated GIF.
+        
+        Args:
+            input_path: Path to the input video
+            output_path: Path to save the GIF
+            size: Target size as (width, height) tuple
+            photo_datetime: Optional datetime when video was taken (for year overlay)
+            max_duration: Maximum duration in seconds (default: 3)
+            fps: Frames per second for the GIF (default: 5)
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if not MOVIEPY_AVAILABLE:
+            print("Error: moviepy not installed, cannot convert video")
+            return False
+        
+        try:
+            # Load video
+            with VideoFileClip(input_path) as video:
+                # Limit duration
+                if video.duration > max_duration:
+                    video = video.subclipped(0, max_duration)
+                
+                # Resize video maintaining aspect ratio and cropping
+                video_aspect = video.w / video.h
+                target_aspect = size[0] / size[1]
+                
+                if video_aspect > target_aspect:
+                    # Video is wider - crop width
+                    new_width = int(video.h * target_aspect)
+                    x_center = video.w / 2
+                    x1 = int(x_center - new_width/2)
+                    x2 = int(x_center + new_width/2)
+                    video = video.cropped(x1=x1, x2=x2)
+                else:
+                    # Video is taller - crop height
+                    new_height = int(video.w / target_aspect)
+                    y_center = video.h / 2
+                    y1 = int(y_center - new_height/2)
+                    y2 = int(y_center + new_height/2)
+                    video = video.cropped(y1=y1, y2=y2)
+                
+                # Resize to target size
+                video = video.resized(height=size[1], width=size[0])
+                
+                # Extract frames and add year overlay
+                if photo_datetime:
+                    def add_year_overlay(get_frame, t):
+                        frame = get_frame(t)
+                        img = Image.fromarray(frame.astype('uint8'))
+                        draw = ImageDraw.Draw(img)
+                        year_text = str(photo_datetime.year)
+                        
+                        # Try to use a nice font
+                        try:
+                            font_size = int(size[1] * 0.15)
+                            font = ImageFont.truetype("arial.ttf", font_size)
+                        except:
+                            try:
+                                font = ImageFont.load_default()
+                            except:
+                                font = None
+                        
+                        # Get text size
+                        if font:
+                            bbox = draw.textbbox((0, 0), year_text, font=font)
+                            text_width = bbox[2] - bbox[0]
+                            text_height = bbox[3] - bbox[1]
+                        else:
+                            text_width = len(year_text) * 8
+                            text_height = 12
+                        
+                        # Position at bottom center
+                        x = (size[0] - text_width) // 2
+                        y = int(size[1] * 0.88) - text_height
+                        
+                        # Choose color based on time of day
+                        hour = photo_datetime.hour
+                        if 6 <= hour < 12:
+                            text_color = (255, 215, 0)  # Gold
+                            shadow_color = (139, 115, 0)
+                        elif 12 <= hour < 18:
+                            text_color = (255, 140, 0)  # Orange
+                            shadow_color = (139, 69, 0)
+                        elif 18 <= hour < 21:
+                            text_color = (255, 0, 255)  # Magenta
+                            shadow_color = (139, 0, 139)
+                        else:
+                            text_color = (0, 191, 255)  # Blue
+                            shadow_color = (0, 0, 139)
+                        
+                        # Draw text with shadow
+                        draw.text((x + 2, y + 2), year_text, fill=shadow_color, font=font)
+                        draw.text((x, y), year_text, fill=text_color, font=font)
+                        
+                        return np.array(img)
+                    
+                    video = video.transform(add_year_overlay)
+                
+                # Save as GIF with reduced colors for smaller file size
+                video.write_gif(output_path, fps=fps, logger=None)
+            
+            return True
+        except Exception as e:
+            print(f"Error converting video to GIF: {e}")
+            if 'video' in locals():
+                try:
+                    video.close()
+                except:
+                    pass
+            return False
+    
+    def upload_image_direct(self, image_path: str) -> tuple[bool, float]:
         """
         Upload an image directly to GeekMagic without PHP processing.
         
@@ -296,17 +505,20 @@ class GeekMagicClient:
             image_path: Path to the image file
             
         Returns:
-            True if successful, False otherwise
+            Tuple of (success: bool, file_size_kb: float)
         """
         try:
             upload_url = f"{self.base_url}/doUpload?dir=%2Fimage%2F"
-            print(f"Uploading directly to GeekMagic at {upload_url}...")
             
             filename = os.path.basename(image_path)
             
             # Read the entire file into memory to avoid Content-Length issues
             with open(image_path, 'rb') as f:
                 file_data = f.read()
+            
+            file_size_kb = len(file_data) / 1024
+            
+            print(f"Uploading {filename} ({file_size_kb:.1f} KB) to GeekMagic...")
             
             files = {
                 'file': (filename, file_data, 'image/jpeg')
@@ -315,12 +527,12 @@ class GeekMagicClient:
             response = requests.post(upload_url, files=files)
             response.raise_for_status()
             
-            print(f"Successfully uploaded {filename} to GeekMagic")
-            return True
+            print(f"✓ Successfully uploaded {filename} ({file_size_kb:.1f} KB)")
+            return True, file_size_kb
             
         except requests.exceptions.RequestException as e:
             print(f"Error uploading image: {e}")
-            return False
+            return False, 0.0
 
 
 def wait_for_geekmagic(geekmagic: GeekMagicClient, max_retries: int = 10, retry_delay: int = 300) -> bool:
@@ -461,6 +673,8 @@ def main():
     uploaded_count = 0
     skipped_count = 0
     failed_count = 0
+    total_uploaded_kb = 0.0
+    MAX_DISK_SPACE_KB = 600  # GeekMagic has 600KB disk space
     
     with tempfile.TemporaryDirectory() as temp_dir:
         for i, memory in enumerate(memories, 1):
@@ -473,9 +687,14 @@ def main():
                 failed_count += 1
                 continue
             
+            # Determine asset type
+            asset_type = memory.get('type', '').upper()
+            is_video = asset_type == 'VIDEO'
+            
             # Check if file already exists on device
             # The device may truncate filenames, so check if any existing file contains the asset_id suffix
-            target_filename = f"resized_{asset_id}.jpg"
+            file_ext = ".gif" if is_video else ".jpg"
+            target_filename = f"resized_{asset_id}{file_ext}"
             asset_suffix = asset_id.split('-')[-1]  # Get last part of UUID
             already_exists = any(asset_suffix in existing_file for existing_file in existing_files)
             
@@ -484,23 +703,60 @@ def main():
                 skipped_count += 1
                 continue
             
+            # Check if we have enough disk space
+            if total_uploaded_kb >= MAX_DISK_SPACE_KB:
+                print(f"⚠️ Disk space limit reached ({total_uploaded_kb:.1f}/{MAX_DISK_SPACE_KB} KB)")
+                print(f"Skipping remaining {len(memories) - i + 1} memories")
+                skipped_count += len(memories) - i + 1
+                break
+            
+            # Extract datetime from memory metadata
+            photo_datetime = None
+            date_str = (
+                memory.get('exifInfo', {}).get('dateTimeOriginal') or 
+                memory.get('fileCreatedAt') or
+                memory.get('createdAt')
+            )
+            if date_str:
+                try:
+                    if date_str.endswith('Z'):
+                        photo_datetime = datetime.fromisoformat(date_str.replace('Z', '+00:00'))
+                    else:
+                        photo_datetime = datetime.fromisoformat(date_str)
+                    print(f"Memory from {photo_datetime.strftime('%Y-%m-%d %H:%M')}")
+                except:
+                    pass
+            
             # Download the asset
-            temp_file = os.path.join(temp_dir, f"memory_{asset_id}.jpg")
+            temp_ext = ".mp4" if is_video else ".jpg"
+            temp_file = os.path.join(temp_dir, f"memory_{asset_id}{temp_ext}")
             if not immich.download_asset(asset_id, temp_file):
                 failed_count += 1
                 continue
             
-            # Resize the image to 240x240
+            # Process the asset (resize image or convert video to GIF)
             resized_file = os.path.join(temp_dir, target_filename)
-            if not geekmagic.resize_image(temp_file, resized_file, (240, 240)):
-                print("Warning: Failed to resize image, uploading original")
-                resized_file = temp_file
+            if is_video:
+                if not MOVIEPY_AVAILABLE:
+                    print(f"Skipping video {asset_id} - moviepy not installed")
+                    skipped_count += 1
+                    continue
+                if not geekmagic.convert_video_to_gif(temp_file, resized_file, (240, 240), photo_datetime):
+                    print("Warning: Failed to convert video to GIF")
+                    failed_count += 1
+                    continue
+            else:
+                if not geekmagic.resize_image(temp_file, resized_file, (240, 240), photo_datetime):
+                    print("Warning: Failed to resize image, uploading original")
+                    resized_file = temp_file
             
             # Upload to GeekMagic
-            success = geekmagic.upload_image_direct(resized_file)
+            success, file_size_kb = geekmagic.upload_image_direct(resized_file)
             
             if success:
                 uploaded_count += 1
+                total_uploaded_kb += file_size_kb
+                print(f"Total uploaded: {total_uploaded_kb:.1f}/{MAX_DISK_SPACE_KB} KB ({total_uploaded_kb/MAX_DISK_SPACE_KB*100:.1f}%)")
             else:
                 failed_count += 1
     
@@ -514,6 +770,9 @@ def main():
     print(f"Failed: {failed_count}")
     if deleted_count > 0:
         print(f"Old files deleted: {deleted_count}")
+    print(f"\nDisk Space Used: {total_uploaded_kb:.1f}/{MAX_DISK_SPACE_KB} KB ({total_uploaded_kb/MAX_DISK_SPACE_KB*100:.1f}%)")
+    if total_uploaded_kb >= MAX_DISK_SPACE_KB * 0.9:
+        print("⚠️  Warning: Disk space is near capacity!")
     print("="*60)
 
 
