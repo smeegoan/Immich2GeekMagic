@@ -1,15 +1,19 @@
-FROM python:3.11-alpine
+FROM python:3.11-slim
 
-# Install dependencies
-RUN apk add --no-cache \
-    jpeg-dev \
-    zlib-dev \
-    libjpeg \
-    dcron \
-    && pip install --no-cache-dir \
-    requests \
-    Pillow \
-    python-dotenv
+# Install system dependencies for moviepy and Pillow
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ffmpeg \
+    imagemagick \
+    libjpeg-dev \
+    zlib1g-dev \
+    cron \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements file
+COPY requirements.txt .
+
+# Install Python dependencies
+RUN pip install --no-cache-dir -r requirements.txt
 
 # Create app directory
 WORKDIR /app
