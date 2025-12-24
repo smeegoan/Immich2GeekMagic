@@ -380,17 +380,28 @@ class GeekMagicClient:
                     draw = ImageDraw.Draw(img)
                     year_text = str(photo_datetime.year)
                     
-                    # Try to use a nice font, fall back to default if not available
-                    try:
-                        # Try to load a TrueType font (adjust size as needed)
-                        font_size = int(size[1] * 0.15)  # 15% of image height
-                        font = ImageFont.truetype("arial.ttf", font_size)
-                    except:
+                    # Try to use a nice font with proper size
+                    font = None
+                    font_size = int(size[1] * 0.15)  # 15% of image height
+                    
+                    # Try multiple font paths (Windows, Linux/Docker)
+                    font_paths = [
+                        "arial.ttf",  # Windows
+                        "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",  # Linux/Docker
+                        "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",  # Alternative Linux
+                        "/System/Library/Fonts/Helvetica.ttc",  # macOS
+                    ]
+                    
+                    for font_path in font_paths:
                         try:
-                            # Try default font with larger size
-                            font = ImageFont.load_default()
+                            font = ImageFont.truetype(font_path, font_size)
+                            break
                         except:
-                            font = None
+                            continue
+                    
+                    # If no TrueType font found, we'll draw larger text manually
+                    if not font:
+                        font = ImageFont.load_default()
                     
                     # Get text bounding box
                     if font:
@@ -497,15 +508,27 @@ class GeekMagicClient:
                         draw = ImageDraw.Draw(img)
                         year_text = str(photo_datetime.year)
                         
-                        # Try to use a nice font
-                        try:
-                            font_size = int(size[1] * 0.15)
-                            font = ImageFont.truetype("arial.ttf", font_size)
-                        except:
+                        # Try to use a nice font with proper size
+                        font = None
+                        font_size = int(size[1] * 0.15)
+                        
+                        # Try multiple font paths (Windows, Linux/Docker)
+                        font_paths = [
+                            "arial.ttf",
+                            "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf",
+                            "/usr/share/fonts/truetype/liberation/LiberationSans-Bold.ttf",
+                            "/System/Library/Fonts/Helvetica.ttc",
+                        ]
+                        
+                        for font_path in font_paths:
                             try:
-                                font = ImageFont.load_default()
+                                font = ImageFont.truetype(font_path, font_size)
+                                break
                             except:
-                                font = None
+                                continue
+                        
+                        if not font:
+                            font = ImageFont.load_default()
                         
                         # Get text size
                         if font:
