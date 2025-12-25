@@ -22,7 +22,9 @@ services:
     # Ofelia labels for scheduling
     labels:
       ofelia.enabled: "true"
-      ofelia.job-exec.sync-memories.schedule: "0 50 7 * * *"  # Run at 7:50 AM daily
+      ofelia.job-exec.sync-memories.schedule: |
+        0 50 7 * * *
+        0 50 9 * * *
       ofelia.job-exec.sync-memories.command: "python /app/immich_to_geekmagic.py"
     
     # Use host network if you have connectivity issues
