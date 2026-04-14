@@ -100,15 +100,16 @@ docker run --rm \
 
 ## Automated Scheduling
 
-The docker-compose.yml includes Ofelia scheduler that runs the sync at **7:50 AM daily**.
+The docker-compose.yml includes Ofelia scheduler that runs the sync **every hour at :50 past the hour, from 7:50 AM to 5:50 PM** (11 times daily). The container also runs once immediately on startup.
 
 To change the schedule, edit the Ofelia label in docker-compose.yml:
 ```yaml
-ofelia.job-exec.sync-memories.schedule: "0 50 7 * * *"  # second minute hour day month weekday
+ofelia.job-exec.sync-memories.schedule: "0 50 7-17 * * *"  # second minute hour(s) day month weekday
 ```
 
 Examples:
-- `0 0 8 * * *` - Daily at 8:00 AM
+- `0 50 7 * * *` - Once daily at 7:50 AM
+- `0 0 8 * * *` - Once daily at 8:00 AM
 - `0 30 9 * * 1-5` - Weekdays at 9:30 AM
 
 After changes, restart: `docker-compose down && docker-compose up -d`

@@ -11,8 +11,7 @@ from datetime import datetime, timedelta
 from typing import List, Dict, Optional, Any
 import tempfile
 import time
-from io import BytesIO
-from PIL import Image, ImageDraw, ImageFont
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 from urllib.parse import quote
 from dotenv import load_dotenv
 
@@ -221,7 +220,7 @@ class GeekMagicClient:
         """
         try:
             url = f"{self.base_url}/filelist?dir=/image/"
-            response = requests.get(url)
+            response = requests.get(url, timeout=5)
             response.raise_for_status()
             
             # Parse the response - it might be JSON or HTML
@@ -320,9 +319,9 @@ class GeekMagicClient:
             file_path = f"/image//{filename}"
             url = f"{self.base_url}/delete?file={quote(file_path)}"
             
-            response = requests.get(url)
+            response = requests.get(url, timeout=5)
             response.raise_for_status()
-            
+
             print(f"Deleted {filename} from GeekMagic")
             return True
             
@@ -347,7 +346,6 @@ class GeekMagicClient:
             with Image.open(input_path) as img:
                 # Apply EXIF orientation to prevent rotated images
                 try:
-                    from PIL import ImageOps
                     img = ImageOps.exif_transpose(img)
                 except Exception:
                     pass  # If EXIF orientation fails, continue without it
@@ -579,6 +577,26 @@ class GeekMagicClient:
                     pass
             return False
     
+    def set_slideshow_interval(self, interval_seconds: int) -> bool:
+        """
+        Set the image switch interval on the GeekMagic device.
+
+        Args:
+            interval_seconds: Interval in seconds between image switches
+
+        Returns:
+            True if successful, False otherwise
+        """
+        try:
+            url = f"{self.base_url}/set?i_i={interval_seconds}&autoplay=1"
+            response = requests.get(url, timeout=5)
+            response.raise_for_status()
+            print(f"✓ Slideshow interval set to {interval_seconds}s")
+            return True
+        except requests.exceptions.RequestException as e:
+            print(f"Error setting slideshow interval: {e}")
+            return False
+
     def upload_image_direct(self, image_path: str) -> tuple[bool, float]:
         """
         Upload an image directly to GeekMagic without PHP processing.
@@ -606,25 +624,20 @@ class GeekMagicClient:
             mime_type = 'image/gif' if filename.lower().endswith('.gif') else 'image/jpeg'
             
             # Use a fresh session to avoid connection reuse issues
-            session = requests.Session()
-            
-            # Pass raw bytes directly in tuple format
             files = {
                 'file': (filename, file_content, mime_type)
             }
-            
+
             # Post without manually setting Content-Length, use fresh session
-            response = session.post(upload_url, files=files)
-            response.raise_for_status()
-            session.close()
-            
+            with requests.Session() as session:
+                response = session.post(upload_url, files=files)
+                response.raise_for_status()
+
             print(f"✓ Successfully uploaded {filename} ({file_size_kb:.1f} KB)")
             return True, file_size_kb
-            
+
         except requests.exceptions.RequestException as e:
             print(f"Error uploading image: {e}")
-            if 'session' in locals():
-                session.close()
             return False, 0.0
 
 
@@ -733,7 +746,7 @@ def main():
         print("  1. Device is powered on")
         print("  2. Device is connected to network")
         print("  3. URL is correct in .env file")
-        print(f"  4. Expected connection window: 7:50 AM - 10:00 AM")
+        print(f"  4. Expected connection window: 7:50 AM - 5:50 PM (Ofelia schedule)")
         sys.exit(1)
     
     # Get existing files on GeekMagic
@@ -1035,6 +1048,15 @@ def main():
     if free_after_kb <= total_device_kb * 0.1:
         print("⚠️  Warning: Disk space is near capacity!")
     print("="*60)
+
+    # Set slideshow interval based on total files on device
+    total_on_device = already_on_device + uploaded_count
+    if total_on_device <= 1:
+        print(f"\nOnly {total_on_device} file(s) on device — setting slideshow interval to 36000s")
+        geekmagic.set_slideshow_interval(36000)
+    else:
+        print(f"\n{total_on_device} files on device — setting slideshow interval to 5s")
+        geekmagic.set_slideshow_interval(5)
 
 
 if __name__ == "__main__":

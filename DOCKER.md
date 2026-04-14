@@ -52,21 +52,20 @@ GEEKMAGIC_URL=http://192.168.1.107/
 ## Schedule
 
 By default, the sync runs:
-- **Daily at 8:00 AM** (server time)
+- **Every hour at :50, from 7:50 AM to 5:50 PM** (11 times daily, via Ofelia in docker-compose)
 - **Once immediately** when the container starts
 
 ### Changing the Schedule
 
-Edit the cron schedule in `Dockerfile`:
+Edit the Ofelia label in `docker-compose.yml`:
 
-```dockerfile
-# Current: Daily at 8:00 AM
-RUN echo "0 8 * * * cd /app && python immich_to_geekmagic.py >> /var/log/cron.log 2>&1" > /etc/crontabs/root
+```yaml
+ofelia.job-exec.sync-memories.schedule: "0 50 7-17 * * *"  # second minute hour(s) day month weekday
 
 # Examples:
-# Every 6 hours: "0 */6 * * *"
-# Twice daily (8 AM and 8 PM): "0 8,20 * * *"
-# Every day at noon: "0 12 * * *"
+# Once daily at 7:50 AM: "0 50 7 * * *"
+# Once daily at 8:00 AM: "0 0 8 * * *"
+# Every 2 hours (8 AM–6 PM): "0 0 8-18/2 * * *"
 ```
 
 ## Monitoring
@@ -81,8 +80,8 @@ RUN echo "0 8 * * * cd /app && python immich_to_geekmagic.py >> /var/log/cron.lo
 # Container logs
 docker logs -f immich-geekmagic-sync
 
-# Cron logs
-docker exec immich-geekmagic-sync tail -f /var/log/cron.log
+# Ofelia scheduler logs
+docker logs -f ofelia-scheduler
 ```
 
 ## Manual Trigger
@@ -118,7 +117,7 @@ In Portainer:
 - Ensure Immich and GeekMagic are accessible from the container
 
 ### Sync not running
-- Check cron logs: `docker exec immich-geekmagic-sync cat /var/log/cron.log`
+- Check Ofelia scheduler logs: `docker logs ofelia-scheduler`
 - Verify timezone is correct
 - Manually trigger to test: `docker exec immich-geekmagic-sync python /app/immich_to_geekmagic.py`
 
