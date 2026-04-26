@@ -89,7 +89,7 @@ docker logs -f ofelia-scheduler
 Run a sync manually without waiting for the scheduled time:
 
 ```bash
-docker exec immich-geekmagic-sync python /app/immich_to_geekmagic.py
+docker exec immich-geekmagic-sync python3 /app/immich_to_geekmagic.py
 ```
 
 ## Timezone Configuration
@@ -119,7 +119,7 @@ In Portainer:
 ### Sync not running
 - Check Ofelia scheduler logs: `docker logs ofelia-scheduler`
 - Verify timezone is correct
-- Manually trigger to test: `docker exec immich-geekmagic-sync python /app/immich_to_geekmagic.py`
+- Manually trigger to test: `docker exec immich-geekmagic-sync python3 /app/immich_to_geekmagic.py`
 
 ### Network issues
 - Ensure the container can reach both Immich and GeekMagic

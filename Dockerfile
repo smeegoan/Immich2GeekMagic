@@ -22,5 +22,5 @@ WORKDIR /app
 # Copy application files
 COPY immich_to_geekmagic.py .
 
-# Run initial sync on startup; Ofelia (docker-compose) handles recurring scheduling
-CMD ["python3", "/app/immich_to_geekmagic.py"]
+# Run initial sync on startup, then keep container alive so Ofelia can exec into it
+CMD ["sh", "-c", "python3 /app/immich_to_geekmagic.py; sleep infinity"]

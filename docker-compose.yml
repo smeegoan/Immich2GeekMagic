@@ -2,7 +2,7 @@ version: '3.8'
 
 services:
   immich-geekmagic-sync:
-    build: .
+    image: 192.168.1.18:5002/immich2geekmagic:latest
     container_name: immich-geekmagic-sync
     restart: unless-stopped
     environment:
@@ -21,8 +21,10 @@ services:
     
     # Ofelia labels for scheduling
     labels:
+      wud.watch: false
       ofelia.enabled: "true"
-      ofelia.job-exec.sync-memories.schedule: "0 50 7-17 * * *"
+      ofelia.job-exec.sync-memories.schedule: |
+        0 50 7-17 * * *
       ofelia.job-exec.sync-memories.command: "python /app/immich_to_geekmagic.py"
     
     # Use host network if you have connectivity issues

@@ -218,6 +218,13 @@ class GeekMagicClient:
         Returns:
             List of dicts with 'name' and 'size' (in bytes, or None if unavailable)
         """
+        def _extract_items(items):
+            return [
+                {'name': item.get('name', item) if isinstance(item, dict) else str(item),
+                 'size': item.get('size') if isinstance(item, dict) else None}
+                for item in items
+            ]
+
         try:
             url = f"{self.base_url}/filelist?dir=/image/"
             response = requests.get(url, timeout=5)
@@ -228,26 +235,38 @@ class GeekMagicClient:
                 data = response.json()
                 # If it's JSON, extract filenames and sizes
                 if isinstance(data, list):
-                    return [
-                        {'name': item.get('name', item) if isinstance(item, dict) else str(item),
-                         'size': item.get('size') if isinstance(item, dict) else None}
-                        for item in data
-                    ]
-                elif isinstance(data, dict) and 'files' in data:
-                    return [
-                        {'name': f.get('name', f) if isinstance(f, dict) else str(f),
-                         'size': f.get('size') if isinstance(f, dict) else None}
-                        for f in data['files']
-                    ]
-                return []
+                    return _extract_items(data)
+                elif isinstance(data, dict):
+                    # Try common key names the device may use
+                    for key in ('files', 'items', 'data', 'list', 'fileList', 'file_list'):
+                        if key in data and isinstance(data[key], list):
+                            return _extract_items(data[key])
+                    # No recognised key - dump the response so we can diagnose
+                    print(f"Warning: Unrecognised /filelist JSON structure. Keys: {list(data.keys())}")
+                    print(f"Raw response (first 500 chars): {response.text[:500]}")
+                    return []
+                else:
+                    print(f"Warning: Unexpected /filelist JSON type: {type(data)}")
+                    print(f"Raw response (first 500 chars): {response.text[:500]}")
+                    return []
             except json.JSONDecodeError:
                 # Parse HTML response to extract filenames only
                 import re
                 html = response.text
-                # Look for href='/image//filename' patterns
-                pattern = r"href='/image//([^']+)'"
-                matches = re.findall(pattern, html)
-                return [{'name': m, 'size': None} for m in matches]
+                # Try several href patterns the device might emit
+                for pattern in (
+                    r"href='/image//([^'\"]+)'",
+                    r'href="/image//([^"\']+)"',
+                    r"href='/image/([^'\"]+)'",
+                    r'href="/image/([^"\']+)"',
+                ):
+                    matches = re.findall(pattern, html)
+                    if matches:
+                        return [{'name': m, 'size': None} for m in matches]
+                # Nothing matched – dump a snippet so we can improve the parser
+                print(f"Warning: Could not parse /filelist HTML response.")
+                print(f"Raw response (first 500 chars): {html[:500]}")
+                return []
                 
         except requests.exceptions.RequestException as e:
             print(f"Error getting file list: {e}")
