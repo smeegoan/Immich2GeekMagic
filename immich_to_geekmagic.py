@@ -58,6 +58,17 @@ class ImmichClient:
             print(f"Error getting user info: {e}")
             return None
     
+    def get_asset_info(self, asset_id: str) -> Optional[Dict]:
+        """Fetch full asset details from Immich, including exifInfo with location."""
+        url = f"{self.base_url}/api/assets/{asset_id}"
+        try:
+            response = requests.get(url, headers=self.headers)
+            response.raise_for_status()
+            return response.json()
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching asset info for {asset_id}: {e}")
+            return None
+
     def search_memories(self, target_date: Optional[datetime] = None) -> List[Dict]:
         """
         Search for today's memories (photos from this day in previous years).
@@ -129,6 +140,19 @@ class ImmichClient:
         
         return memories
     
+    def get_random_assets(self, count: int = 5) -> List[Dict]:
+        """Fetch random assets from Immich."""
+        url = f"{self.base_url}/api/assets/random?count={count}"
+        try:
+            response = requests.get(url, headers=self.headers)
+            response.raise_for_status()
+            assets = response.json()
+            print(f"Fetched {len(assets)} random assets from Immich")
+            return assets
+        except requests.exceptions.RequestException as e:
+            print(f"Error fetching random assets: {e}")
+            return []
+
     def download_asset(self, asset_id: str, output_path: str) -> bool:
         """
         Download an asset from Immich.
@@ -180,6 +204,26 @@ class ImmichClient:
                 
         except requests.exceptions.RequestException as e:
             print(f"Error downloading asset {asset_id}: {e}")
+            return False
+
+    def download_thumbnail(self, asset_id: str, output_path: str) -> bool:
+        """Download the Immich-generated preview thumbnail (always a JPEG) for an asset."""
+        url = f"{self.base_url}/api/assets/{asset_id}/thumbnail?size=preview"
+        try:
+            response = requests.get(url, headers=self.headers, stream=True)
+            response.raise_for_status()
+            with open(output_path, 'wb') as f:
+                for chunk in response.iter_content(chunk_size=8192):
+                    f.write(chunk)
+            if os.path.getsize(output_path) == 0:
+                print(f"Error: Thumbnail is empty for asset {asset_id}")
+                return False
+            with Image.open(output_path) as img:
+                img.verify()
+            print(f"Downloaded thumbnail for {asset_id}")
+            return True
+        except Exception as e:
+            print(f"Error downloading thumbnail for {asset_id}: {e}")
             return False
 
 
@@ -348,16 +392,17 @@ class GeekMagicClient:
             print(f"Error deleting {filename}: {e}")
             return False
     
-    def resize_image(self, input_path: str, output_path: str, size: tuple = (240, 240), photo_datetime: Optional[datetime] = None) -> bool:
+    def resize_image(self, input_path: str, output_path: str, size: tuple = (240, 240), photo_datetime: Optional[datetime] = None, photo_location: Optional[str] = None) -> bool:
         """
         Resize and crop an image to fill the specified size without black bars.
-        
+
         Args:
             input_path: Path to the input image
             output_path: Path to save the resized image
             size: Target size as (width, height) tuple
             photo_datetime: Optional datetime when photo was taken (for year overlay)
-            
+            photo_location: Optional location string to display at top of image
+
         Returns:
             True if successful, False otherwise
         """
@@ -432,7 +477,7 @@ class GeekMagicClient:
                     
                     # Position at bottom center with some padding
                     x = (size[0] - text_width) // 2
-                    y = int(size[1] * 0.88) - text_height  # 12% from bottom
+                    y = int(size[1] * 0.93) - text_height
                     
                     # Choose color based on time of day photo was taken
                     hour = photo_datetime.hour
@@ -455,11 +500,50 @@ class GeekMagicClient:
                         shadow_color = (0, 0, 139)  # Dark blue
                     
                     # Draw text with shadow for better visibility
-                    # Shadow
                     draw.text((x + 2, y + 2), year_text, fill=shadow_color, font=font)
-                    # Main text
                     draw.text((x, y), year_text, fill=text_color, font=font)
-                
+
+                # Draw location at top if provided
+                if photo_location:
+                    if not photo_datetime:
+                        draw = ImageDraw.Draw(img)
+                    loc_font_size = max(int(size[1] * 0.08), 8)
+                    loc_font = None
+                    font_paths = [
+                        "arial.ttf",
+                        "/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf",
+                        "/usr/share/fonts/truetype/liberation/LiberationSans-Regular.ttf",
+                        "/System/Library/Fonts/Helvetica.ttc",
+                    ]
+                    for font_path in font_paths:
+                        try:
+                            loc_font = ImageFont.truetype(font_path, loc_font_size)
+                            break
+                        except:
+                            continue
+                    if not loc_font:
+                        loc_font = ImageFont.load_default()
+                    loc_bbox = draw.textbbox((0, 0), photo_location, font=loc_font)
+                    loc_w = loc_bbox[2] - loc_bbox[0]
+                    loc_x = (size[0] - loc_w) // 2
+                    loc_y = int(size[1] * 0.03)
+                    # Use same time-of-day colour as year text (default to gold if no datetime)
+                    hour = photo_datetime.hour if photo_datetime else 9
+                    if 6 <= hour < 12:
+                        loc_color = (255, 215, 0)
+                        loc_shadow = (139, 115, 0)
+                    elif 12 <= hour < 18:
+                        loc_color = (255, 140, 0)
+                        loc_shadow = (139, 69, 0)
+                    elif 18 <= hour < 21:
+                        loc_color = (255, 0, 255)
+                        loc_shadow = (139, 0, 139)
+                    else:
+                        loc_color = (0, 191, 255)
+                        loc_shadow = (0, 0, 139)
+                    draw.text((loc_x + 1, loc_y + 1), photo_location, fill=loc_shadow, font=loc_font)
+                    draw.text((loc_x, loc_y), photo_location, fill=loc_color, font=loc_font)
+
                 # Save as JPEG
                 img.save(output_path, 'JPEG', quality=85)
                 
@@ -468,8 +552,9 @@ class GeekMagicClient:
             print(f"Error resizing image: {e}")
             return False
     
-    def convert_video_to_gif(self, input_path: str, output_path: str, size: tuple = (240, 240), 
-                           photo_datetime: Optional[datetime] = None, max_duration: int = 3, fps: int = 5) -> bool:
+    def convert_video_to_gif(self, input_path: str, output_path: str, size: tuple = (240, 240),
+                           photo_datetime: Optional[datetime] = None, photo_location: Optional[str] = None,
+                           max_duration: int = 3, fps: int = 5) -> bool:
         """
         Convert a video to an animated GIF.
         
@@ -558,7 +643,7 @@ class GeekMagicClient:
                         
                         # Position at bottom center
                         x = (size[0] - text_width) // 2
-                        y = int(size[1] * 0.88) - text_height
+                        y = int(size[1] * 0.94) - text_height
                         
                         # Choose color based on time of day
                         hour = photo_datetime.hour
@@ -578,7 +663,38 @@ class GeekMagicClient:
                         # Draw text with shadow
                         draw.text((x + 2, y + 2), year_text, fill=shadow_color, font=font)
                         draw.text((x, y), year_text, fill=text_color, font=font)
-                        
+
+                        # Draw location at top if provided
+                        if photo_location:
+                            loc_font_size = max(int(size[1] * 0.08), 8)
+                            loc_font = None
+                            for fp in font_paths:
+                                try:
+                                    loc_font = ImageFont.truetype(fp, loc_font_size)
+                                    break
+                                except:
+                                    continue
+                            if not loc_font:
+                                loc_font = ImageFont.load_default()
+                            loc_bbox = draw.textbbox((0, 0), photo_location, font=loc_font)
+                            loc_w = loc_bbox[2] - loc_bbox[0]
+                            loc_x = (size[0] - loc_w) // 2
+                            loc_y = int(size[1] * 0.03)
+                            if 6 <= hour < 12:
+                                loc_color = (255, 215, 0)
+                                loc_shadow = (139, 115, 0)
+                            elif 12 <= hour < 18:
+                                loc_color = (255, 140, 0)
+                                loc_shadow = (139, 69, 0)
+                            elif 18 <= hour < 21:
+                                loc_color = (255, 0, 255)
+                                loc_shadow = (139, 0, 139)
+                            else:
+                                loc_color = (0, 191, 255)
+                                loc_shadow = (0, 0, 139)
+                            draw.text((loc_x + 1, loc_y + 1), photo_location, fill=loc_shadow, font=loc_font)
+                            draw.text((loc_x, loc_y), photo_location, fill=loc_color, font=loc_font)
+
                         return np.array(img)
                     
                     video = video.transform(add_year_overlay)
@@ -650,14 +766,36 @@ class GeekMagicClient:
             # Post without manually setting Content-Length, use fresh session
             with requests.Session() as session:
                 response = session.post(upload_url, files=files)
-                response.raise_for_status()
+                # The GeekMagic device sometimes sends duplicate Content-Length headers
+                # which raises InvalidHeader — treat any 2xx as success regardless
+                if not (200 <= response.status_code < 300):
+                    print(f"Error uploading image: HTTP {response.status_code}")
+                    return False, 0.0
 
             print(f"✓ Successfully uploaded {filename} ({file_size_kb:.1f} KB)")
             return True, file_size_kb
 
-        except requests.exceptions.RequestException as e:
+        except Exception as e:
             print(f"Error uploading image: {e}")
             return False, 0.0
+
+
+def check_home_presence(ha_url: str, ha_token: str, entity_id: str = 'sensor.pedro_cardoso') -> bool:
+    """
+    Check if the person entity is 'home' via Home Assistant REST API.
+    Fails open (returns True) if HA is unreachable, so updates still run.
+    """
+    url = f"{ha_url.rstrip('/')}/api/states/{entity_id}"
+    headers = {'Authorization': f'Bearer {ha_token}', 'Content-Type': 'application/json'}
+    try:
+        response = requests.get(url, headers=headers, timeout=5)
+        response.raise_for_status()
+        state = response.json().get('state', '')
+        print(f"Home presence ({entity_id}): {state}")
+        return state == 'home'
+    except Exception as e:
+        print(f"Warning: Could not check HA presence ({e}) — proceeding anyway")
+        return True
 
 
 def wait_for_geekmagic(geekmagic: GeekMagicClient, max_retries: int = 10, retry_delay: int = 300) -> bool:
@@ -699,10 +837,21 @@ def main():
     IMMICH_URL = os.getenv('IMMICH_URL')
     IMMICH_API_KEY = os.getenv('IMMICH_API_KEY')
     GEEKMAGIC_URL = os.getenv('GEEKMAGIC_URL')
+
+    # Optional Home Assistant presence check
+    HA_URL = os.getenv('HA_URL', '').strip()
+    HA_TOKEN = os.getenv('HA_TOKEN', '').strip()
+    HA_ENTITY = os.getenv('HA_ENTITY', 'sensor.pedro_cardoso').strip()
     
     # Retry configuration
     MAX_RETRIES = int(os.getenv('GEEKMAGIC_MAX_RETRIES', '10'))
     RETRY_DELAY = int(os.getenv('GEEKMAGIC_RETRY_DELAY', '300'))  # 5 minutes default
+
+    # Home country: omitted from location overlay when photos are taken there
+    HOME_COUNTRY = os.getenv('HOME_COUNTRY', '').strip().lower()
+
+    # Number of random photos to show when there are no memories for today
+    RANDOM_FALLBACK_COUNT = int(os.getenv('RANDOM_FALLBACK_COUNT', '5'))
     
     # Allow overriding the date for testing (format: MM-DD or YYYY-MM-DD)
     TEST_DATE = os.getenv('TEST_DATE', '')
@@ -749,13 +898,25 @@ def main():
     # Initialize clients
     immich = ImmichClient(IMMICH_URL, IMMICH_API_KEY)
     geekmagic = GeekMagicClient(GEEKMAGIC_URL)
-    
+
+    # Check home presence before doing any work (avoids unnecessary flash writes)
+    if HA_URL and HA_TOKEN:
+        print("\nChecking home presence via Home Assistant...")
+        if not check_home_presence(HA_URL, HA_TOKEN, HA_ENTITY):
+            print("Not home — skipping GeekMagic update.")
+            return
+        print("Home presence confirmed — proceeding with update.")
+
     # Fetch memories
     print("\nFetching memories from Immich...")
     memories = immich.search_memories(search_date)
     
     if not memories:
-        print("No memories found for today.")
+        print(f"No memories found for today. Fetching {RANDOM_FALLBACK_COUNT} random photos instead...")
+        memories = immich.get_random_assets(RANDOM_FALLBACK_COUNT)
+
+    if not memories:
+        print("No photos available.")
         return
     
     # Wait for GeekMagic device to be available
@@ -800,7 +961,29 @@ def main():
             # Get the last part of the UUID (what appears in truncated filenames)
             asset_suffix = asset_id.split('-')[-1]
             memory_suffixes.add(asset_suffix)
-    
+
+    # Early-exit: if every memory is already on device and no stale files exist,
+    # there is nothing to write to flash at all.
+    existing_names = [f['name'] for f in existing_files]
+    memories_already_present = sum(
+        1 for m in memories
+        if (aid := (m.get('id') or m.get('assetId'))) and
+           any(aid.split('-')[-1] in name for name in existing_names)
+    )
+    stale_files_on_device = [
+        f for f in existing_files
+        if not any(suffix in f['name'] for suffix in memory_suffixes)
+    ]
+
+    if memories_already_present == len(memories) and not stale_files_on_device:
+        print("\nAll memories already on device and no stale files — nothing to update.")
+        total_on_device = len(existing_files)
+        if total_on_device <= 1:
+            geekmagic.set_slideshow_interval(36000)
+        else:
+            geekmagic.set_slideshow_interval(5)
+        return
+
     # Delete files that aren't in our upload list
     deleted_count = 0
     deleted_size_kb = 0.0
@@ -815,12 +998,12 @@ def main():
                 if file_size:
                     deleted_size_kb += file_size / 1024.0
 
-    # If we deleted files, refresh used/remaining space
+    # Update space tracking locally (avoids an extra network call to the device)
     if deleted_count > 0:
         print(f"Deleted {deleted_count} old files (~{deleted_size_kb:.1f} KB freed)")
-        used_space_kb = geekmagic.get_used_space_kb()
+        used_space_kb = max(used_space_kb - deleted_size_kb, 0.0)
         remaining_kb = max(total_device_kb - used_space_kb, 0.0)
-        print(f"After deletion: {used_space_kb:.1f} KB used / {remaining_kb:.1f} KB free")
+        print(f"After deletion: ~{used_space_kb:.1f} KB used / ~{remaining_kb:.1f} KB free")
     
     # PHASE 1: Process all memories and calculate sizes
     print("\n" + "="*60)
@@ -857,13 +1040,17 @@ def main():
                 already_on_device += 1
                 continue
             
-            # Extract datetime from memory metadata
+            # Fetch full asset details from Immich to get complete exifInfo (including location)
+            asset_info = immich.get_asset_info(asset_id) or memory
+            exif_info = asset_info.get('exifInfo', {})
+
+            # Extract datetime from metadata
             photo_datetime = None
             photo_year = None
             date_str = (
-                memory.get('exifInfo', {}).get('dateTimeOriginal') or 
-                memory.get('fileCreatedAt') or
-                memory.get('createdAt')
+                exif_info.get('dateTimeOriginal') or
+                asset_info.get('fileCreatedAt') or
+                asset_info.get('createdAt')
             )
             if date_str:
                 try:
@@ -875,30 +1062,68 @@ def main():
                     print(f"Memory from {photo_datetime.strftime('%Y-%m-%d %H:%M')}")
                 except:
                     pass
+
+            # Extract location from EXIF metadata
+            country = exif_info.get('country')
+            city = exif_info.get('city')
+            state = exif_info.get('state')
+            print(f"  EXIF location fields — city: {city!r}, state: {state!r}, country: {country!r}")
+            if not exif_info:
+                print("  (no exifInfo returned by Immich)")
+            elif not city and not country:
+                print("  (no location data — photo may lack GPS coordinates)")
+            omit_country = HOME_COUNTRY and country and country.lower() == HOME_COUNTRY
+            location_parts = [p for p in [city, None if omit_country else country] if p]
+            photo_location = ', '.join(location_parts) if location_parts else None
+            if photo_location:
+                print(f"  Location overlay: {photo_location!r}" + (" (country omitted — home country)" if omit_country else ""))
+            else:
+                print("  Location overlay: (none)")
             
             # Download the asset
             temp_ext = ".mp4" if is_video else ".jpg"
             temp_file = os.path.join(temp_dir, f"memory_{asset_id}{temp_ext}")
-            if not immich.download_asset(asset_id, temp_file):
-                failed_processing += 1
-                continue
-            
+            downloaded_ok = immich.download_asset(asset_id, temp_file)
+
             # Process the asset (resize image or convert video to GIF)
             resized_file = os.path.join(temp_dir, target_filename)
+            used_thumbnail = False
+
             if is_video:
                 if not MOVIEPY_AVAILABLE:
-                    print(f"Skipping video {asset_id} - moviepy not installed")
-                    failed_processing += 1
-                    continue
-                if not geekmagic.convert_video_to_gif(temp_file, resized_file, (240, 240), photo_datetime):
-                    print("Warning: Failed to convert video to GIF")
-                    failed_processing += 1
-                    continue
+                    print(f"Video {asset_id}: moviepy not installed, falling back to thumbnail")
+                    downloaded_ok = False
+                elif not downloaded_ok or not geekmagic.convert_video_to_gif(temp_file, resized_file, (240, 240), photo_datetime, photo_location):
+                    print("Video conversion failed, falling back to Immich preview thumbnail...")
+                    downloaded_ok = False
+
+                if not downloaded_ok:
+                    thumb_file = os.path.join(temp_dir, f"thumb_{asset_id}.jpg")
+                    if not immich.download_thumbnail(asset_id, thumb_file):
+                        failed_processing += 1
+                        continue
+                    if not geekmagic.resize_image(thumb_file, resized_file, (240, 240), photo_datetime, photo_location):
+                        print("Warning: Failed to resize thumbnail")
+                        failed_processing += 1
+                        continue
+                    used_thumbnail = True
             else:
-                if not geekmagic.resize_image(temp_file, resized_file, (240, 240), photo_datetime):
+                if not downloaded_ok:
+                    print("Original download failed, falling back to Immich preview thumbnail...")
+                    thumb_file = os.path.join(temp_dir, f"thumb_{asset_id}.jpg")
+                    if not immich.download_thumbnail(asset_id, thumb_file):
+                        failed_processing += 1
+                        continue
+                    temp_file = thumb_file
+                    used_thumbnail = True
+
+                if not geekmagic.resize_image(temp_file, resized_file, (240, 240), photo_datetime, photo_location):
                     print("Warning: Failed to resize image")
                     failed_processing += 1
                     continue
+
+            if used_thumbnail:
+                print("  (used Immich preview thumbnail as source)")
             
             # Get file size
             try:
@@ -1060,9 +1285,9 @@ def main():
     if deleted_count > 0:
         print(f"Old files deleted: {deleted_count}")
     
-    # Report device space status
-    used_after_kb = geekmagic.get_used_space_kb() or (total_device_kb - remaining_kb)
-    free_after_kb = max(total_device_kb - used_after_kb, 0.0)
+    # Report device space status (use tracked values — no extra network call)
+    used_after_kb = total_device_kb - remaining_kb
+    free_after_kb = remaining_kb
     print(f"\nDevice space used: {used_after_kb:.1f} KB / {total_device_kb} KB ({(used_after_kb/total_device_kb*100) if total_device_kb else 0:.1f}%)")
     if free_after_kb <= total_device_kb * 0.1:
         print("⚠️  Warning: Disk space is near capacity!")
