@@ -780,7 +780,7 @@ class GeekMagicClient:
             return False, 0.0
 
 
-def check_home_presence(ha_url: str, ha_token: str, entity_id: str = 'sensor.pedro_cardoso') -> bool:
+def check_home_presence(ha_url: str, ha_token: str, entity_id: str = 'person.pedro_cardoso') -> bool:
     """
     Check if the person entity is 'home' via Home Assistant REST API.
     Fails open (returns True) if HA is unreachable, so updates still run.
@@ -841,7 +841,7 @@ def main():
     # Optional Home Assistant presence check
     HA_URL = os.getenv('HA_URL', '').strip()
     HA_TOKEN = os.getenv('HA_TOKEN', '').strip()
-    HA_ENTITY = os.getenv('HA_ENTITY', 'sensor.pedro_cardoso').strip()
+    HA_ENTITY = os.getenv('HA_ENTITY', 'person.pedro_cardoso').strip()
     
     # Retry configuration
     MAX_RETRIES = int(os.getenv('GEEKMAGIC_MAX_RETRIES', '10'))
